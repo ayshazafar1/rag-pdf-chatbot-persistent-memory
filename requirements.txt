@@ -1,0 +1,16 @@
+streamlit
+python-dotenv
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-groq
+langchain-chroma
+chromadb
+pypdf
+sentence-transformers
+transformers
+tokenizers
+torch
+accelerate
+numpy
+requests
