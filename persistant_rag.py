@@ -18,13 +18,59 @@ from langchain_chroma import Chroma
 
 
 # ==========================
-# Setup
+# Page Setup
 # ==========================
+
+st.set_page_config(
+    page_title="RAG PDF Assistant",
+    layout="wide",
+    page_icon="📚"
+)
 
 load_dotenv()
 
-st.set_page_config(page_title="RAG Q&A", layout="wide")
-st.title("📝 RAG Q&A with Multiple PDFs + Persistent Memory")
+st.title("📚 RAG PDF Chat Assistant")
+st.caption("Ask questions from your uploaded PDFs using AI")
+
+
+# ==========================
+# UI Styling
+# ==========================
+
+st.markdown("""
+<style>
+
+.stApp{
+background: linear-gradient(135deg,#0f172a,#1e293b);
+color:white;
+}
+
+h1,h2,h3{
+color:#e2e8f0;
+}
+
+[data-testid="stChatMessage"]{
+border-radius:15px;
+padding:12px;
+margin-bottom:10px;
+}
+
+[data-testid="stChatMessage"]:nth-child(odd){
+background-color:#1e293b;
+}
+
+[data-testid="stChatMessage"]:nth-child(even){
+background-color:#334155;
+}
+
+.stTextInput input{
+background-color:#1e293b;
+color:white;
+border-radius:8px;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 
 # ==========================
@@ -41,18 +87,31 @@ os.makedirs(MEMORY_DIR, exist_ok=True)
 
 with st.sidebar:
 
-    st.header("⚙️ Config")
+    st.header("⚙️ Configuration")
 
     api_key_input = st.text_input("Groq API Key", type="password")
 
+    session_id = st.text_input("Session ID", value="default_session")
+
+    st.markdown("---")
+
+    if st.button("Clear Chat Memory"):
+
+        file_path = os.path.join(MEMORY_DIR, f"{session_id}.pkl")
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        st.success("Chat memory cleared")
+
+    st.markdown("---")
     st.caption("Upload PDFs → Ask questions → Get answers")
 
 
 api_key = api_key_input or os.getenv("GROQ_API_KEY")
 
 if not api_key:
-
-    st.warning("Please enter your Groq API Key")
+    st.warning("Please enter your Groq API key")
     st.stop()
 
 
@@ -76,13 +135,13 @@ llm = ChatGroq(
 # ==========================
 
 uploaded_files = st.file_uploader(
-    "📚 Upload PDF files",
+    "📂 Upload PDF files",
     type="pdf",
     accept_multiple_files=True
 )
 
 if not uploaded_files:
-    st.info("Upload one or more PDFs to begin.")
+    st.info("Upload at least one PDF to begin")
     st.stop()
 
 
@@ -109,11 +168,7 @@ for pdf in uploaded_files:
 
     all_docs.extend(docs)
 
-
 st.success(f"Loaded {len(all_docs)} pages from {len(uploaded_files)} PDFs")
-
-
-# Cleanup temp files
 
 for p in tmp_paths:
     try:
@@ -159,20 +214,16 @@ if "vectorstore" not in st.session_state:
 
     st.session_state.vectorstore = vectorstore
 
-
 vectorstore = st.session_state.vectorstore
-
 
 retriever = vectorstore.as_retriever(
     search_type="similarity",
     search_kwargs={"k": 4}
 )
 
-st.sidebar.write(f"🔎 Indexed {len(splits)} chunks")
-
 
 # ==========================
-# Helper: Join Documents
+# Helper Function
 # ==========================
 
 def join_docs(docs, max_chars=7000):
@@ -200,7 +251,7 @@ def join_docs(docs, max_chars=7000):
 rewrite_prompt = ChatPromptTemplate.from_messages([
 
     ("system",
-     "Rewrite the user's latest question into a standalone search query using chat history."
+     "Rewrite the user's latest question into a standalone search query using chat history. "
      "Return only the rewritten query."),
 
     MessagesPlaceholder("chat_history"),
@@ -213,12 +264,9 @@ qa_prompt = ChatPromptTemplate.from_messages([
 
     ("system",
      "You are a STRICT RAG assistant.\n"
-     "Answer ONLY using the provided context.\n\n"
-     "Rules:\n"
-     "1. If the answer is not present in the context reply exactly:\n"
-     "'Out of scope - not found in provided documents.'\n"
-     "2. Do NOT guess\n"
-     "3. Do NOT use outside knowledge\n\n"
+     "Answer ONLY using the provided context.\n"
+     "If the answer is not present reply exactly:\n"
+     "'Out of scope - not found in provided documents.'\n\n"
      "Context:\n{context}"
      ),
 
@@ -234,11 +282,11 @@ qa_prompt = ChatPromptTemplate.from_messages([
 
 def get_history(session_id):
 
-    file_path = os.path.join(MEMORY_DIR, f"{session_id}.pkl")
+    path = os.path.join(MEMORY_DIR, f"{session_id}.pkl")
 
-    if os.path.exists(file_path):
+    if os.path.exists(path):
 
-        with open(file_path, "rb") as f:
+        with open(path, "rb") as f:
             history = pickle.load(f)
 
     else:
@@ -249,22 +297,18 @@ def get_history(session_id):
 
 def save_history(session_id, history):
 
-    file_path = os.path.join(MEMORY_DIR, f"{session_id}.pkl")
+    path = os.path.join(MEMORY_DIR, f"{session_id}.pkl")
 
-    with open(file_path, "wb") as f:
+    with open(path, "wb") as f:
         pickle.dump(history, f)
 
-
-# ==========================
-# Chat UI
-# ==========================
-
-session_id = st.text_input("Session ID", value="default_session")
 
 history = get_history(session_id)
 
 
-# Display previous messages
+# ==========================
+# Display Previous Messages
+# ==========================
 
 for msg in history.messages:
 
@@ -275,7 +319,11 @@ for msg in history.messages:
         st.chat_message("assistant").write(msg.content)
 
 
-user_q = st.chat_input("Ask a question...")
+# ==========================
+# Chat Input
+# ==========================
+
+user_q = st.chat_input("Ask a question about the PDFs...")
 
 
 # ==========================
@@ -284,8 +332,6 @@ user_q = st.chat_input("Ask a question...")
 
 if user_q:
 
-    # Rewrite query
-
     rewrite_msgs = rewrite_prompt.format_messages(
         chat_history=history.messages,
         input=user_q
@@ -293,46 +339,27 @@ if user_q:
 
     standalone_q = llm.invoke(rewrite_msgs).content.strip()
 
-
-    # Retrieve documents
-
     docs = retriever.invoke(standalone_q)
-
 
     if not docs:
 
         answer = "Out of scope - not found in provided documents."
 
-        st.chat_message("user").write(user_q)
-        st.chat_message("assistant").write(answer)
+    else:
 
-        history.add_user_message(user_q)
-        history.add_ai_message(answer)
+        context = join_docs(docs)
 
-        save_history(session_id, history)
+        qa_msgs = qa_prompt.format_messages(
+            chat_history=history.messages,
+            input=user_q,
+            context=context
+        )
 
-        st.stop()
-
-
-    # Build context
-
-    context = join_docs(docs)
-
-
-    # Ask LLM
-
-    qa_msgs = qa_prompt.format_messages(
-        chat_history=history.messages,
-        input=user_q,
-        context=context
-    )
-
-    answer = llm.invoke(qa_msgs).content
+        answer = llm.invoke(qa_msgs).content
 
 
     st.chat_message("user").write(user_q)
     st.chat_message("assistant").write(answer)
-
 
     history.add_user_message(user_q)
     history.add_ai_message(answer)
@@ -340,19 +367,14 @@ if user_q:
     save_history(session_id, history)
 
 
-    # ==========================
-    # Debug Panels
-    # ==========================
+    # Debug section
 
-    with st.expander("Debug: Query + Retrieval"):
+    with st.expander("Debug Information"):
 
-        st.write("Standalone Query:")
+        st.write("Standalone Query")
         st.code(standalone_q)
 
         st.write(f"Retrieved {len(docs)} chunks")
-
-
-    with st.expander("Retrieved Chunks"):
 
         for i, doc in enumerate(docs, 1):
 
@@ -361,21 +383,4 @@ if user_q:
                 f"(p{doc.metadata.get('page','?')})**"
             )
 
-            st.write(
-                doc.page_content[:500]
-                + ("..." if len(doc.page_content) > 500 else "")
-            )
-
-
-# ==========================
-# Clear Chat Memory Button
-# ==========================
-
-if st.sidebar.button("Clear Chat Memory"):
-
-    file_path = os.path.join(MEMORY_DIR, f"{session_id}.pkl")
-
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-    st.sidebar.success("Chat memory cleared")
+            st.write(doc.page_content[:400])
